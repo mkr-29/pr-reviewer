@@ -79,6 +79,14 @@ class PRReviewBot:
             if not pr_urls:
                 continue
 
+            # If REPO_FILTER is configured (e.g. 'backend'), only review matching URLs
+            if Config.REPO_FILTER:
+                filtered_urls = [u for u in pr_urls if Config.REPO_FILTER in u.lower()]
+                if not filtered_urls:
+                    log(f"Skipping post {post['id']}: no PR/MR URLs match REPO_FILTER='{Config.REPO_FILTER}'")
+                    continue
+                pr_urls = filtered_urls
+
             for url in pr_urls:
                 key = self.state_manager.make_key(post["id"], url)
                 if key in done:

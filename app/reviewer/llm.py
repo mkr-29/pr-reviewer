@@ -1,48 +1,78 @@
 import os
-from typing import Optional
+import sys
+import time
+import requests
+from typing import Optional, List, Tuple, Callable
 from app.config import Config
 from app.git_providers.base import PullRequestDetails
 from app.reviewer.rubric import SYSTEM_RUBRIC_PROMPT, build_review_prompt
 
 
+def log(msg: str):
+    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+    print(f"{timestamp} [LLM] {msg}", file=sys.stderr, flush=True)
+
+
 class LLMReviewer:
     def __init__(self, provider: Optional[str] = None):
-        self.provider = (provider or Config.LLM_PROVIDER).lower()
-        self._active_provider = self._resolve_provider()
+        self.preferred_provider = (provider or Config.LLM_PROVIDER).lower()
 
-    def _resolve_provider(self) -> str:
-        if self.provider in ["gemini", "google"]:
-            return "gemini"
-        if self.provider in ["anthropic", "claude"]:
-            return "anthropic"
-        if self.provider in ["openai", "cursor"]:
-            return "openai"
+    def get_providers(self) -> List[Tuple[str, Callable[[str], str]]]:
+        """Returns prioritized list of (provider_name, call_fn) for automatic fallback."""
+        all_available: dict[str, Callable[[str], str]] = {}
 
-        # Auto detection based on available API keys
         if Config.GEMINI_API_KEY:
-            return "gemini"
-        if Config.ANTHROPIC_API_KEY:
-            return "anthropic"
+            all_available["gemini"] = self._call_gemini
+        if Config.GROQ_API_KEY:
+            all_available["groq"] = self._call_groq
+        if Config.AZURE_OPENAI_API_KEY and Config.AZURE_OPENAI_ENDPOINT:
+            all_available["azure"] = self._call_azure
+        if Config.INCEPTION_API_KEY:
+            all_available["inception"] = self._call_inception
         if Config.OPENAI_API_KEY:
-            return "openai"
+            all_available["openai"] = self._call_openai
+        if Config.ANTHROPIC_API_KEY:
+            all_available["anthropic"] = self._call_anthropic
 
-        raise ValueError(
-            "No LLM API keys configured. Please provide GEMINI_API_KEY, "
-            "ANTHROPIC_API_KEY, or OPENAI_API_KEY / CURSOR_API_KEY in .env"
-        )
+        if not all_available:
+            raise ValueError(
+                "No LLM API keys configured. Please configure at least one in .env "
+                "(GEMINI_API_KEY, GROQ_API_KEY, AZURE_OPENAI_API_KEY, INCEPTION_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)"
+            )
+
+        ordered: List[Tuple[str, Callable[[str], str]]] = []
+        preferred = self.preferred_provider
+        if preferred in all_available:
+            ordered.append((preferred, all_available[preferred]))
+
+        for name, fn in all_available.items():
+            if name != preferred:
+                ordered.append((name, fn))
+
+        return ordered
 
     def review_pr(self, pr: PullRequestDetails) -> str:
-        """Executes the review for a given PullRequestDetails and returns the markdown response."""
+        """
+        Executes the review for a given PullRequestDetails and returns markdown response.
+        If a provider fails (e.g. rate limit, 404, or timeout), it automatically retries
+        with the next available provider in the chain.
+        """
         prompt = build_review_prompt(pr)
+        providers = self.get_providers()
+        errors: List[str] = []
 
-        if self._active_provider == "gemini":
-            return self._call_gemini(prompt)
-        elif self._active_provider == "anthropic":
-            return self._call_anthropic(prompt)
-        elif self._active_provider == "openai":
-            return self._call_openai(prompt)
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self._active_provider}")
+        for name, call_fn in providers:
+            try:
+                log(f"Attempting review with LLM provider: '{name}'...")
+                res = call_fn(prompt)
+                if res and res.strip():
+                    log(f"Successfully generated review with provider '{name}'.")
+                    return res.strip()
+            except Exception as e:
+                log(f"Provider '{name}' failed: {e}. Retrying next available provider...")
+                errors.append(f"{name}: {e}")
+
+        raise RuntimeError(f"All configured LLM providers failed to generate review. Errors: {'; '.join(errors)}")
 
     def _call_gemini(self, user_prompt: str) -> str:
         import google.generativeai as genai
@@ -60,6 +90,75 @@ class LLMReviewer:
             raise RuntimeError("Gemini returned an empty response.")
         return response.text.strip()
 
+    def _call_groq(self, user_prompt: str) -> str:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {Config.GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": Config.GROQ_MODEL,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": SYSTEM_RUBRIC_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ]
+        }
+        res = requests.post(url, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT)
+        if not res.ok:
+            raise RuntimeError(f"Groq API error ({res.status_code}): {res.text}")
+        data = res.json()
+        content = data["choices"][0]["message"]["content"]
+        if not content:
+            raise RuntimeError("Groq API returned an empty response.")
+        return content.strip()
+
+    def _call_azure(self, user_prompt: str) -> str:
+        endpoint = Config.AZURE_OPENAI_ENDPOINT.rstrip("/")
+        url = f"{endpoint}/openai/deployments/{Config.AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version={Config.AZURE_OPENAI_API_VERSION}"
+        headers = {
+            "api-key": Config.AZURE_OPENAI_API_KEY,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": SYSTEM_RUBRIC_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ]
+        }
+        res = requests.post(url, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT)
+        if not res.ok:
+            raise RuntimeError(f"Azure OpenAI error ({res.status_code}): {res.text}")
+        data = res.json()
+        content = data["choices"][0]["message"]["content"]
+        if not content:
+            raise RuntimeError("Azure OpenAI returned an empty response.")
+        return content.strip()
+
+    def _call_inception(self, user_prompt: str) -> str:
+        url = "https://api.inceptionlabs.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {Config.INCEPTION_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": Config.INCEPTION_MODEL,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": SYSTEM_RUBRIC_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ]
+        }
+        res = requests.post(url, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT)
+        if not res.ok:
+            raise RuntimeError(f"Inception API error ({res.status_code}): {res.text}")
+        data = res.json()
+        content = data["choices"][0]["message"]["content"]
+        if not content:
+            raise RuntimeError("Inception API returned an empty response.")
+        return content.strip()
+
     def _call_anthropic(self, user_prompt: str) -> str:
         from anthropic import Anthropic
 
@@ -71,7 +170,6 @@ class LLMReviewer:
             system=SYSTEM_RUBRIC_PROMPT,
             messages=[{"role": "user", "content": user_prompt}]
         )
-        # Extract text content
         text_parts = [block.text for block in message.content if getattr(block, "text", None)]
         result = "".join(text_parts).strip()
         if not result:

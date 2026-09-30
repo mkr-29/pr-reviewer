@@ -19,19 +19,26 @@ def test_bot_workflow_end_to_end(tmp_path):
     mock_mm.build_mention_regex.side_effect = MattermostClient.build_mention_regex
 
     # Posts in channel:
-    # Post 1: has MR with branch mismatch ('dev')
-    # Post 2: has PR targeting 'pre-main'
+    # Post 1: has backend MR with branch mismatch ('dev')
+    # Post 2: has backend PR targeting 'pre-main'
+    # Post 3: has frontend PR (should be skipped by REPO_FILTER='backend')
     mock_mm.get_posts_since.return_value = [
         {
             "id": "post_1",
             "user_id": "other_user",
-            "message": "Hey @mayank, please check this MR: https://gitlab.com/acme/proj/-/merge_requests/10",
+            "message": "Hey @mayank, please check this MR: https://gitlab.com/acme/backend-service/-/merge_requests/10",
             "delete_at": 0
         },
         {
             "id": "post_2",
             "user_id": "other_user",
-            "message": "@mayank review this PR please https://github.com/acme/repo/pull/20",
+            "message": "@mayank review this PR please https://github.com/acme/backend-api/pull/20",
+            "delete_at": 0
+        },
+        {
+            "id": "post_3",
+            "user_id": "other_user",
+            "message": "@mayank frontend PR https://github.com/acme/frontend-app/pull/99",
             "delete_at": 0
         }
     ]
@@ -40,14 +47,15 @@ def test_bot_workflow_end_to_end(tmp_path):
     mock_resolver = MagicMock()
     mock_resolver.extract_pr_urls.side_effect = lambda msg: [
         u for u in [
-            "https://gitlab.com/acme/proj/-/merge_requests/10",
-            "https://github.com/acme/repo/pull/20"
+            "https://gitlab.com/acme/backend-service/-/merge_requests/10",
+            "https://github.com/acme/backend-api/pull/20",
+            "https://github.com/acme/frontend-app/pull/99"
         ] if u in msg
     ]
 
     mr_details = PullRequestDetails(
         provider="gitlab",
-        url="https://gitlab.com/acme/proj/-/merge_requests/10",
+        url="https://gitlab.com/acme/backend-service/-/merge_requests/10",
         id="10",
         title="MR feature",
         description="description",
@@ -59,7 +67,7 @@ def test_bot_workflow_end_to_end(tmp_path):
 
     pr_details = PullRequestDetails(
         provider="github",
-        url="https://github.com/acme/repo/pull/20",
+        url="https://github.com/acme/backend-api/pull/20",
         id="20",
         title="PR fix",
         description="description",
@@ -112,14 +120,14 @@ def test_bot_workflow_end_to_end(tmp_path):
     call2 = mock_mm.reply_in_thread.call_args_list[1]
     assert call2[0][0] == "channel_456"
     assert call2[0][1]["id"] == "post_2"
-    assert "**Automated review for** https://github.com/acme/repo/pull/20" in call2[0][2]
+    assert "**Automated review for** https://github.com/acme/backend-api/pull/20" in call2[0][2]
     assert "## Verdict: GOOD" in call2[0][2]
 
     # Verify state saved both keys
     state = state_manager.load()
     assert len(state["done"]) == 2
-    assert "post_1|https://gitlab.com/acme/proj/-/merge_requests/10" in state["done"]
-    assert "post_2|https://github.com/acme/repo/pull/20" in state["done"]
+    assert "post_1|https://gitlab.com/acme/backend-service/-/merge_requests/10" in state["done"]
+    assert "post_2|https://github.com/acme/backend-api/pull/20" in state["done"]
 
     # 6. Run again - should skip both because they are in state!
     mock_mm.reply_in_thread.reset_mock()

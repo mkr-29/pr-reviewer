@@ -49,18 +49,13 @@ def main():
         run_job(dry_run=args.dry_run)
         sys.exit(0)
 
-    # Daemon scheduler mode (Everyday at 8:00 PM / SCHEDULE_TIME)
-    target_time = Config.SCHEDULE_TIME
-    tz_name = Config.SCHEDULE_TIMEZONE
-    try:
-        local_tz = pytz.timezone(tz_name)
-    except Exception:
-        local_tz = pytz.timezone("Asia/Kolkata")
-        tz_name = "Asia/Kolkata"
+    # Daemon scheduler mode
+    poll_hours = Config.POLL_INTERVAL_HOURS
+    filter_desc = f"'{Config.REPO_FILTER}'" if Config.REPO_FILTER else "all"
 
-    log(f"PR Reviewer daemon initialized.")
-    log(f"Daily schedule target: Everyday at {target_time} ({tz_name})")
-    log("Running scheduler loop. Press Ctrl+C to stop.")
+    log("PR Reviewer daemon initialized.")
+    log(f"Target Channel: '{Config.MM_CHANNEL_NAME}' | Repo Filter: {filter_desc}")
+    log(f"Polling Interval: Every {poll_hours} hour(s) | Daily target: {Config.SCHEDULE_TIME} ({Config.SCHEDULE_TIMEZONE})")
 
     def handle_exit(signum, frame):
         log("Received termination signal. Exiting scheduler gracefully.")
@@ -69,15 +64,20 @@ def main():
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
 
-    # To ensure accurate timezone scheduling regardless of host machine system clock timezone:
-    schedule.every().day.at(target_time, tz_name).do(run_job, dry_run=args.dry_run)
+    # 1. Run immediate scan on startup so pending/recent MRs are reviewed right away
+    log("Running initial review scan cycle on daemon startup...")
+    run_job(dry_run=args.dry_run)
+    log(f"Initial scan completed. Entering polling loop (running every {poll_hours} hour(s)). Press Ctrl+C to stop.")
+
+    # 2. Schedule recurring execution every N hours
+    schedule.every(poll_hours).hours.do(run_job, dry_run=args.dry_run)
+    if Config.SCHEDULE_TIME:
+        try:
+            schedule.every().day.at(Config.SCHEDULE_TIME, Config.SCHEDULE_TIMEZONE).do(run_job, dry_run=args.dry_run)
+        except Exception:
+            pass
 
     while True:
-        # Check current time in target timezone
-        now_in_tz = datetime.now(local_tz)
-        current_time_str = now_in_tz.strftime("%H:%M")
-
-        # When the minute strikes SCHEDULE_TIME and hasn't run this minute, run job
         schedule.run_pending()
         time.sleep(30)
 
