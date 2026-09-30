@@ -6,43 +6,54 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _clean_env(key: str, default: str = "") -> str:
+    val = os.environ.get(key, default)
+    if val is None:
+        return ""
+    val = str(val).strip()
+    if (val.startswith("'") and val.endswith("'")) or (val.startswith('"') and val.endswith('"')):
+        val = val[1:-1].strip()
+    return val
+
+
 class Config:
     # Mattermost Configuration
-    MM_URL: str = os.environ.get("MM_URL", "").rstrip("/")
-    MM_TOKEN: str = os.environ.get("MM_TOKEN", "")
-    MM_CHANNEL_NAME: str = os.environ.get("MM_CHANNEL_NAME", "Daily Task Update")
-    MM_CHANNEL_ID: str = os.environ.get("MM_CHANNEL_ID", "")
+    MM_URL: str = _clean_env("MM_URL", "").rstrip("/")
+    MM_TOKEN: str = _clean_env("MM_TOKEN", "")
+    MM_CHANNEL_NAME: str = _clean_env("MM_CHANNEL_NAME", "Daily Task Update")
+    MM_CHANNEL_ID: str = _clean_env("MM_CHANNEL_ID", "")
+    MM_TARGET_USERNAME: str = _clean_env("MM_TARGET_USERNAME", "")
 
     # Target Branch Gate
-    TARGET_BRANCH: str = os.environ.get("TARGET_BRANCH", "pre-main")
+    TARGET_BRANCH: str = _clean_env("TARGET_BRANCH", "pre-main")
 
     # State & Persistence
-    STATE_FILE: Path = Path(os.environ.get("STATE_FILE", "data/state.json"))
-    LOOKBACK_HOURS: float = float(os.environ.get("LOOKBACK_HOURS", "24.0"))
+    STATE_FILE: Path = Path(_clean_env("STATE_FILE", "data/state.json"))
+    LOOKBACK_HOURS: float = float(_clean_env("LOOKBACK_HOURS", "24.0"))
 
     # Scheduler Settings
-    SCHEDULE_TIME: str = os.environ.get("SCHEDULE_TIME", "20:00")
-    SCHEDULE_TIMEZONE: str = os.environ.get("SCHEDULE_TIMEZONE", "Asia/Kolkata")
+    SCHEDULE_TIME: str = _clean_env("SCHEDULE_TIME", "20:00")
+    SCHEDULE_TIMEZONE: str = _clean_env("SCHEDULE_TIMEZONE", "Asia/Kolkata")
 
     # GitLab Configuration
-    GITLAB_URL: str = os.environ.get("GITLAB_URL", "https://gitlab.com").rstrip("/")
-    GITLAB_TOKEN: str = os.environ.get("GITLAB_TOKEN", "")
+    GITLAB_URL: str = _clean_env("GITLAB_URL", "https://gitlab.com").rstrip("/")
+    GITLAB_TOKEN: str = _clean_env("GITLAB_TOKEN", "")
 
     # GitHub Configuration
-    GITHUB_URL: str = os.environ.get("GITHUB_URL", "https://api.github.com").rstrip("/")
-    GITHUB_TOKEN: str = os.environ.get("GITHUB_TOKEN", "")
+    GITHUB_URL: str = _clean_env("GITHUB_URL", "https://api.github.com").rstrip("/")
+    GITHUB_TOKEN: str = _clean_env("GITHUB_TOKEN", "")
 
     # LLM Settings
-    LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "auto").lower()  # auto, gemini, anthropic, openai
-    GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    LLM_PROVIDER: str = _clean_env("LLM_PROVIDER", "auto").lower()  # auto, gemini, anthropic, openai
+    GEMINI_API_KEY: str = _clean_env("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = _clean_env("GEMINI_MODEL", "gemini-2.5-flash")
 
-    ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    ANTHROPIC_API_KEY: str = _clean_env("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_MODEL: str = _clean_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
-    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY") or os.environ.get("CURSOR_API_KEY", "")
-    OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
-    OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    OPENAI_API_KEY: str = _clean_env("OPENAI_API_KEY") or _clean_env("CURSOR_API_KEY", "")
+    OPENAI_BASE_URL: str = _clean_env("OPENAI_BASE_URL", "").rstrip("/")
+    OPENAI_MODEL: str = _clean_env("OPENAI_MODEL", "gpt-4o")
 
     LLM_TIMEOUT: int = int(os.environ.get("LLM_TIMEOUT", "600"))
 

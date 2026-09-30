@@ -92,7 +92,8 @@ def test_bot_workflow_end_to_end(tmp_path):
         state_manager=state_manager,
         git_resolver=mock_resolver,
         reviewer=mock_reviewer,
-        dry_run=False
+        dry_run=False,
+        target_username="mayank"
     )
 
     bot.run_once()

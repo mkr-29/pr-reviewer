@@ -20,13 +20,15 @@ class PRReviewBot:
         state_manager: Optional[StateManager] = None,
         git_resolver: Optional[GitResolver] = None,
         reviewer: Optional[LLMReviewer] = None,
-        dry_run: bool = False
+        dry_run: bool = False,
+        target_username: Optional[str] = None
     ):
         self.dry_run = dry_run
         self.mm = mm_client or MattermostClient()
         self.state_manager = state_manager or StateManager()
         self.git_resolver = git_resolver or GitResolver()
         self.reviewer = reviewer if reviewer is not None else (None if dry_run else LLMReviewer())
+        self.target_username = target_username or Config.MM_TARGET_USERNAME
 
     def run_once(self):
         """Executes a single scan-and-review cycle across the Daily Task Update channel."""
@@ -43,14 +45,15 @@ class PRReviewBot:
         me = self.mm.get_me()
         my_username = me.get("username", "")
         my_id = me.get("id", "")
-        mention_re = self.mm.build_mention_regex(my_username)
+        target_user = self.target_username or my_username
+        mention_re = self.mm.build_mention_regex(target_user)
 
         channel_id = self.mm.find_channel_id()
         state = self.state_manager.load()
         done = set(state.get("done", []))
         run_started = int(time.time() * 1000)
 
-        log(f"Authenticated as @{my_username} (ID: {my_id})")
+        log(f"Authenticated as @{my_username} (ID: {my_id}) | Monitoring mentions for @{target_user}")
         log(f"Scanning channel '{Config.MM_CHANNEL_NAME}' (ID: {channel_id}) since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(state['last_run_ms'] / 1000))}")
 
         posts = self.mm.get_posts_since(channel_id, state["last_run_ms"])

@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # Prevent Python from buffering stdout/stderr
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
     TZ=Asia/Kolkata
 
 # Install system dependencies (tzdata for accurate timezone scheduling, ca-certificates for TLS)
@@ -18,8 +19,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code
+# Copy application source code and tests
 COPY app/ ./app/
+COPY tests/ ./tests/
 COPY main.py pytest.ini ./
 
 # Create data directory for persistent state
