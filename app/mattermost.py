@@ -29,6 +29,10 @@ class MattermostClient:
         """Retrieves authenticated user information."""
         return self.request("GET", "/users/me")
 
+    def get_user(self, user_id: str) -> Dict[str, Any]:
+        """Retrieves user profile by unique user ID."""
+        return self.request("GET", f"/users/{user_id}")
+
     def find_channel_id(self, channel_name: str = Config.MM_CHANNEL_NAME, channel_id: str = Config.MM_CHANNEL_ID) -> str:
         """Finds channel ID by name across user's teams or returns explicit channel_id."""
         if channel_id:
