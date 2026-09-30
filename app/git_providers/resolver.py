@@ -48,9 +48,9 @@ class GitResolver:
     @staticmethod
     def validate_target_branch(pr: PullRequestDetails, required_branch: str = Config.TARGET_BRANCH) -> Tuple[bool, str]:
         """
-        Validates if PR targets the required branch (e.g. pre-main).
+        Validates if PR targets the required branch (supports single branch or comma-separated list like pre-main,staging).
         Returns (is_valid, actual_branch).
         """
         actual = pr.target_branch.strip()
-        required = required_branch.strip()
-        return (actual == required, actual)
+        allowed = [b.strip() for b in required_branch.split(",") if b.strip()]
+        return (actual in allowed, actual)

@@ -138,34 +138,18 @@ class PRReviewBot:
                 try:
                     pr = self.git_resolver.get_details(url)
 
-                    # 1. Skip MRs/PRs that are not open (e.g., merged or closed)
-                    if not pr.is_open:
-                        log(f"Skipping {url}: MR is already {pr.state} on {pr.provider}.")
-                        done.add(key)
-                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status=f"skipped_{pr.state}")
-                        self.state_manager.save(state, dry_run=self.dry_run)
-                        continue
-
-                    # 2. Skip MRs/PRs that have already been approved by human reviewers
-                    if pr.is_approved:
-                        log(f"Skipping {url}: MR is already approved on {pr.provider}.")
-                        done.add(key)
-                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="skipped_approved")
-                        self.state_manager.save(state, dry_run=self.dry_run)
-                        continue
-
-                    # 3. Skip MRs/PRs that this bot has already reviewed at this commit
+                    # Deduplication: Skip if this MR at this commit SHA has already been reviewed by the bot
                     if self.state_manager.is_url_reviewed(state, url, pr.head_sha):
                         sha_label = pr.head_sha[:8] if pr.head_sha else "HEAD"
                         log(f"Skipping {url}: already reviewed by bot at commit {sha_label}.")
                         done.add(key)
-                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="already_reviewed")
                         self.state_manager.save(state, dry_run=self.dry_run)
                         continue
 
                     is_valid_branch, actual_branch = self.git_resolver.validate_target_branch(pr, Config.TARGET_BRANCH)
 
-                    if not is_valid_branch:
+                    # If open MR targets the wrong branch, post a warning so author can retarget before merging
+                    if not is_valid_branch and pr.is_open:
                         log(f"Branch mismatch: {url} targets '{actual_branch}' (expected '{Config.TARGET_BRANCH}')")
                         warning_msg = (
                             f":warning: {url} targets `{actual_branch}`, not `{Config.TARGET_BRANCH}`. "
@@ -174,7 +158,12 @@ class PRReviewBot:
                         self.mm.reply_in_thread(channel_id, post, warning_msg, dry_run=self.dry_run)
                         self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="warned_branch")
                     else:
-                        log(f"Target branch '{Config.TARGET_BRANCH}' verified. Running automated review for {url}...")
+                        # Proceed with full review (open MR on valid branch, or already merged/approved MR)
+                        if pr.state == "merged":
+                            log(f"MR {url} is merged into '{actual_branch}'. Executing review on merged code...")
+                        else:
+                            log(f"Target branch '{actual_branch}' verified. Running automated review for {url}...")
+
                         if self.dry_run and not self.reviewer:
                             review_output = f"[Simulated Review: pr-review rubric applied to {url} with diff length {len(pr.diff)} chars]"
                         else:
@@ -182,7 +171,16 @@ class PRReviewBot:
                                 self.reviewer = LLMReviewer()
                             review_output = self.reviewer.review_pr(pr)
 
-                        reply_msg = f"**Automated review for** {url}\n\n{review_output}"
+                        header_notes = []
+                        if pr.state == "merged":
+                            header_notes.append("*(Note: MR is already merged)*")
+                        if pr.is_approved:
+                            header_notes.append("*(Note: MR is already approved on Git)*")
+                        if not is_valid_branch:
+                            header_notes.append(f"*(Note: target branch is `{actual_branch}`, expected `{Config.TARGET_BRANCH}`)*")
+
+                        extra_header = f" {' '.join(header_notes)}\n\n" if header_notes else "\n\n"
+                        reply_msg = f"**Automated review for** {url}{extra_header}{review_output}"
                         self.mm.reply_in_thread(channel_id, post, reply_msg, dry_run=self.dry_run)
                         self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="reviewed")
 

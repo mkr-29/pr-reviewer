@@ -136,7 +136,7 @@ def test_bot_workflow_end_to_end(tmp_path):
     assert mock_mm.reply_in_thread.call_count == 0
 
 
-def test_skips_merged_closed_and_approved_mrs(tmp_path):
+def test_reviews_merged_and_approved_mrs(tmp_path):
     mock_mm = MagicMock()
     mock_mm.base_url = "https://mattermost.test"
     mock_mm.token = "mock-pat"
@@ -149,14 +149,12 @@ def test_skips_merged_closed_and_approved_mrs(tmp_path):
 
     mock_mm.get_posts_since.return_value = [
         {"id": "p_merged", "user_id": "u2", "message": "@mayank merged: https://gitlab.com/acme/backend/-/merge_requests/100", "delete_at": 0},
-        {"id": "p_closed", "user_id": "u2", "message": "@mayank closed: https://gitlab.com/acme/backend/-/merge_requests/200", "delete_at": 0},
         {"id": "p_approved", "user_id": "u2", "message": "@mayank approved: https://gitlab.com/acme/backend/-/merge_requests/300", "delete_at": 0},
     ]
 
     mock_resolver = MagicMock()
     mock_resolver.extract_pr_urls.side_effect = lambda msg: [u for u in [
         "https://gitlab.com/acme/backend/-/merge_requests/100",
-        "https://gitlab.com/acme/backend/-/merge_requests/200",
         "https://gitlab.com/acme/backend/-/merge_requests/300",
     ] if u in msg]
 
@@ -164,20 +162,20 @@ def test_skips_merged_closed_and_approved_mrs(tmp_path):
         if "100" in url:
             return PullRequestDetails(
                 provider="gitlab", url=url, id="100", title="MR merged", description="",
-                author="dev", source_branch="b", target_branch="pre-main", state="merged"
-            )
-        elif "200" in url:
-            return PullRequestDetails(
-                provider="gitlab", url=url, id="200", title="MR closed", description="",
-                author="dev", source_branch="b", target_branch="pre-main", state="closed"
+                author="dev", source_branch="b", target_branch="staging", state="merged", head_sha="sha100"
             )
         else:
             return PullRequestDetails(
                 provider="gitlab", url=url, id="300", title="MR approved", description="",
-                author="dev", source_branch="b", target_branch="pre-main", state="opened", is_approved=True
+                author="dev", source_branch="b", target_branch="pre-main", state="opened", is_approved=True, head_sha="sha300"
             )
 
     mock_resolver.get_details.side_effect = mock_get_details
+    from app.git_providers.resolver import GitResolver
+    mock_resolver.validate_target_branch.side_effect = GitResolver.validate_target_branch
+
+    mock_reviewer = MagicMock()
+    mock_reviewer.review_pr.return_value = "Verdict: GOOD"
 
     state_file = tmp_path / "state_skip.json"
     state_manager = StateManager(state_file=state_file)
@@ -185,25 +183,26 @@ def test_skips_merged_closed_and_approved_mrs(tmp_path):
         mm_client=mock_mm,
         state_manager=state_manager,
         git_resolver=mock_resolver,
-        reviewer=MagicMock(),
+        reviewer=mock_reviewer,
         dry_run=False,
         target_username="mayank"
     )
 
+    # First run: Both merged and approved MRs SHOULD be reviewed!
     bot.run_once()
+    assert mock_mm.reply_in_thread.call_count == 2
 
-    # None of the 3 MRs should be reviewed or receive a reply!
-    assert mock_mm.reply_in_thread.call_count == 0
-
-    # All 3 should be recorded in state to avoid redundant re-checks
+    # Check reviews were recorded in state
     state = state_manager.load()
     assert "https://gitlab.com/acme/backend/-/merge_requests/100" in state["reviewed_urls"]
-    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/100"]["status"] == "skipped_merged"
-    assert "https://gitlab.com/acme/backend/-/merge_requests/200" in state["reviewed_urls"]
-    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/200"]["status"] == "skipped_closed"
+    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/100"]["status"] == "reviewed"
     assert "https://gitlab.com/acme/backend/-/merge_requests/300" in state["reviewed_urls"]
-    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/300"]["status"] == "skipped_approved"
+    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/300"]["status"] == "reviewed"
 
+    # Second run: Since they are already reviewed at those commit SHAs, they should be skipped!
+    mock_mm.reply_in_thread.reset_mock()
+    bot.run_once()
+    assert mock_mm.reply_in_thread.call_count == 0
 
 def test_skips_when_thread_already_replied(tmp_path):
     mock_mm = MagicMock()
