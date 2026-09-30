@@ -45,15 +45,49 @@ class PRReviewBot:
         me = self.mm.get_me()
         my_username = me.get("username", "")
         my_id = me.get("id", "")
-        target_user = self.target_username or my_username
-        mention_re = self.mm.build_mention_regex(target_user)
+
+        # Resolve all target usernames and names dynamically from user IDs and profiles
+        target_names = set()
+        if isinstance(my_username, str) and my_username.strip():
+            target_names.add(my_username.strip())
+        first_name = me.get("first_name", "")
+        last_name = me.get("last_name", "")
+        if isinstance(first_name, str) and isinstance(last_name, str) and first_name and last_name:
+            target_names.add(f"{first_name.strip()} {last_name.strip()}")
+
+        # Query Mattermost by unique user ID for any configured target accounts
+        if Config.MM_TARGET_USER_IDS:
+            for uid in Config.MM_TARGET_USER_IDS.split(","):
+                uid = uid.strip()
+                if uid and uid != my_id:
+                    try:
+                        u_profile = self.mm.get_user(uid)
+                        if isinstance(u_profile, dict):
+                            uname = u_profile.get("username")
+                            if isinstance(uname, str) and uname.strip():
+                                target_names.add(uname.strip())
+                            fn = u_profile.get("first_name", "")
+                            ln = u_profile.get("last_name", "")
+                            if isinstance(fn, str) and isinstance(ln, str) and fn and ln:
+                                target_names.add(f"{fn.strip()} {ln.strip()}")
+                    except Exception as e:
+                        log(f"Notice: could not resolve user ID '{uid}': {e}")
+
+        if self.target_username:
+            for item in self.target_username.split(","):
+                item_str = str(item).strip().lstrip("@")
+                if item_str:
+                    target_names.add(item_str)
+
+        target_pattern = ",".join(sorted(str(s) for s in target_names))
+        mention_re = self.mm.build_mention_regex(target_pattern)
 
         channel_id = self.mm.find_channel_id()
         state = self.state_manager.load()
         done = set(state.get("done", []))
         run_started = int(time.time() * 1000)
 
-        log(f"Authenticated as @{my_username} (ID: {my_id}) | Monitoring mentions for @{target_user}")
+        log(f"Authenticated as @{my_username} (ID: {my_id}) | Monitoring mentions for: {target_pattern}")
         log(f"Scanning channel '{Config.MM_CHANNEL_NAME}' (ID: {channel_id}) since {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(state['last_run_ms'] / 1000))}")
 
         posts = self.mm.get_posts_since(channel_id, state["last_run_ms"])

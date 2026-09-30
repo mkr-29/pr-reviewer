@@ -23,6 +23,7 @@ class Config:
     MM_CHANNEL_NAME: str = _clean_env("MM_CHANNEL_NAME", "Daily Task Update")
     MM_CHANNEL_ID: str = _clean_env("MM_CHANNEL_ID", "")
     MM_TARGET_USERNAME: str = _clean_env("MM_TARGET_USERNAME", "")
+    MM_TARGET_USER_IDS: str = _clean_env("MM_TARGET_USER_IDS", "")
 
     # Target Branch Gate & Project Filtering
     TARGET_BRANCH: str = _clean_env("TARGET_BRANCH", "pre-main")
