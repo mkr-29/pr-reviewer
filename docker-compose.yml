@@ -1,0 +1,16 @@
+services:
+  reviewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pr-reviewer-bot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Persistent storage for state.json and execution history
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=${SCHEDULE_TIMEZONE:-Asia/Kolkata}
