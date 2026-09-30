@@ -126,9 +126,43 @@ class PRReviewBot:
                 if key in done:
                     continue
 
+                # Check if this thread already has an automated response for this URL
+                if not self.dry_run and self.mm.has_bot_replied_for_url(post, url):
+                    log(f"Skipping {url}: thread for post {post['id']} already contains a bot reply.")
+                    done.add(key)
+                    self.state_manager.record_reviewed(state, post["id"], url, status="already_replied_in_thread")
+                    self.state_manager.save(state, dry_run=self.dry_run)
+                    continue
+
                 log(f"Found candidate: {url} from post {post['id']}")
                 try:
                     pr = self.git_resolver.get_details(url)
+
+                    # 1. Skip MRs/PRs that are not open (e.g., merged or closed)
+                    if not pr.is_open:
+                        log(f"Skipping {url}: MR is already {pr.state} on {pr.provider}.")
+                        done.add(key)
+                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status=f"skipped_{pr.state}")
+                        self.state_manager.save(state, dry_run=self.dry_run)
+                        continue
+
+                    # 2. Skip MRs/PRs that have already been approved by human reviewers
+                    if pr.is_approved:
+                        log(f"Skipping {url}: MR is already approved on {pr.provider}.")
+                        done.add(key)
+                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="skipped_approved")
+                        self.state_manager.save(state, dry_run=self.dry_run)
+                        continue
+
+                    # 3. Skip MRs/PRs that this bot has already reviewed at this commit
+                    if self.state_manager.is_url_reviewed(state, url, pr.head_sha):
+                        sha_label = pr.head_sha[:8] if pr.head_sha else "HEAD"
+                        log(f"Skipping {url}: already reviewed by bot at commit {sha_label}.")
+                        done.add(key)
+                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="already_reviewed")
+                        self.state_manager.save(state, dry_run=self.dry_run)
+                        continue
+
                     is_valid_branch, actual_branch = self.git_resolver.validate_target_branch(pr, Config.TARGET_BRANCH)
 
                     if not is_valid_branch:
@@ -138,6 +172,7 @@ class PRReviewBot:
                             f"Please retarget it to `{Config.TARGET_BRANCH}` and re-share for review."
                         )
                         self.mm.reply_in_thread(channel_id, post, warning_msg, dry_run=self.dry_run)
+                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="warned_branch")
                     else:
                         log(f"Target branch '{Config.TARGET_BRANCH}' verified. Running automated review for {url}...")
                         if self.dry_run and not self.reviewer:
@@ -149,9 +184,9 @@ class PRReviewBot:
 
                         reply_msg = f"**Automated review for** {url}\n\n{review_output}"
                         self.mm.reply_in_thread(channel_id, post, reply_msg, dry_run=self.dry_run)
+                        self.state_manager.record_reviewed(state, post["id"], url, head_sha=pr.head_sha, status="reviewed")
 
                     done.add(key)
-                    state["done"].append(key)
                     self.state_manager.save(state, dry_run=self.dry_run)
                     processed_count += 1
 

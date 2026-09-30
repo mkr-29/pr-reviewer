@@ -25,3 +25,30 @@ def test_state_manager_save_and_load(tmp_path: Path):
     assert len(reloaded["done"]) == 2
     assert key1 in reloaded["done"]
     assert key2 in reloaded["done"]
+
+
+def test_state_manager_reviewed_urls(tmp_path: Path):
+    state_file = tmp_path / "test_state_urls.json"
+    manager = StateManager(state_file=state_file)
+    state = manager.load()
+
+    url = "https://gitlab.com/acme/backend/-/merge_requests/42"
+    head_sha = "abc123456789"
+
+    # Initially not reviewed
+    assert manager.is_url_reviewed(state, url) is False
+    assert manager.is_url_reviewed(state, url, head_sha) is False
+
+    # Record review
+    manager.record_reviewed(state, "post_999", url, head_sha=head_sha, status="reviewed")
+    manager.save(state)
+
+    # Check match with correct sha
+    assert manager.is_url_reviewed(state, url, head_sha) is True
+    # Check match with different sha (new commits pushed)
+    assert manager.is_url_reviewed(state, url, "different_sha") is False
+
+    # Reload from disk
+    reloaded = manager.load()
+    assert manager.is_url_reviewed(reloaded, url, head_sha) is True
+    assert "post_999|" + url in reloaded["done"]

@@ -76,6 +76,32 @@ class MattermostClient:
         }
         return self.request("POST", "/posts", json_data=payload)
 
+    def get_thread_posts(self, post_id: str) -> List[Dict[str, Any]]:
+        """Fetches all posts in the thread of post_id."""
+        try:
+            data = self.request("GET", f"/posts/{post_id}/thread") or {}
+            posts = data.get("posts", {})
+            return list(posts.values())
+        except Exception:
+            return []
+
+    def has_bot_replied_for_url(self, post: Dict[str, Any], url: str) -> bool:
+        """Checks if the bot has already replied in this thread addressing this PR/MR URL."""
+        root_id = post.get("root_id") or post.get("id")
+        if not root_id:
+            return False
+        posts = self.get_thread_posts(root_id)
+        for p in posts:
+            msg = p.get("message", "")
+            if url in msg and (
+                msg.startswith(":warning:") or
+                msg.startswith("**Automated review for**") or
+                "targets `" in msg or
+                "Automated review" in msg
+            ):
+                return True
+        return False
+
     @staticmethod
     def build_mention_regex(username: str) -> re.Pattern:
         """Constructs an exact-word mention regex for @username or multiple comma-separated usernames."""

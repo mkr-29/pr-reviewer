@@ -64,6 +64,18 @@ class GitHubClient:
         for num in issue_nums:
             linked_issues.append({"number": num, "title": f"GitHub Issue #{num}"})
 
+        # 5. Check if PR is merged or approved
+        state = "merged" if meta.get("merged_at") else meta.get("state", "open")
+        is_approved = False
+        try:
+            rev_resp = self.session.get(f"{api_base}/reviews", headers=headers, timeout=10)
+            if rev_resp.ok:
+                reviews = rev_resp.json()
+                if any(r.get("state") == "APPROVED" for r in reviews if isinstance(r, dict)):
+                    is_approved = True
+        except Exception:
+            pass
+
         return PullRequestDetails(
             provider="github",
             url=url,
@@ -79,5 +91,8 @@ class GitHubClient:
             diff=diff_text,
             changed_files=changed_files,
             linked_issues=linked_issues,
-            extra_metadata=meta
+            extra_metadata=meta,
+            state=state,
+            head_sha=meta.get("head", {}).get("sha", ""),
+            is_approved=is_approved
         )

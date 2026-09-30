@@ -60,6 +60,20 @@ class GitLabClient:
         pipeline = meta.get("head_pipeline") or {}
         pipeline_status = pipeline.get("status")
 
+        # 5. Fetch approval status
+        is_approved = False
+        try:
+            appr_resp = self.session.get(f"{meta_url}/approvals", headers=headers, timeout=10)
+            if appr_resp.ok:
+                appr_data = appr_resp.json()
+                approved_by = appr_data.get("approved_by", [])
+                if approved_by and len(approved_by) > 0:
+                    is_approved = True
+                elif appr_data.get("approvals_required", 0) > 0 and appr_data.get("approvals_left", 1) == 0:
+                    is_approved = True
+        except Exception:
+            pass
+
         return PullRequestDetails(
             provider="gitlab",
             url=url,
@@ -75,7 +89,10 @@ class GitLabClient:
             diff=diff_text,
             changed_files=changed_files,
             linked_issues=linked_issues,
-            extra_metadata=meta
+            extra_metadata=meta,
+            state=meta.get("state", "opened"),
+            head_sha=meta.get("sha", ""),
+            is_approved=is_approved
         )
 
     def _fetch_diff(self, api_base: str, project_enc: str, iid: str, web_url: str, headers: Dict[str, str]) -> str:

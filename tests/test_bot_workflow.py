@@ -13,6 +13,7 @@ def test_bot_workflow_end_to_end(tmp_path):
     mock_mm.token = "mock-pat-token"
     mock_mm.get_me.return_value = {"id": "user_123", "username": "mayank"}
     mock_mm.find_channel_id.return_value = "channel_456"
+    mock_mm.has_bot_replied_for_url.return_value = False
 
     # Pre-configure regex builder to match mock username
     from app.mattermost import MattermostClient
@@ -132,4 +133,110 @@ def test_bot_workflow_end_to_end(tmp_path):
     # 6. Run again - should skip both because they are in state!
     mock_mm.reply_in_thread.reset_mock()
     bot.run_once()
+    assert mock_mm.reply_in_thread.call_count == 0
+
+
+def test_skips_merged_closed_and_approved_mrs(tmp_path):
+    mock_mm = MagicMock()
+    mock_mm.base_url = "https://mattermost.test"
+    mock_mm.token = "mock-pat"
+    mock_mm.get_me.return_value = {"id": "uid_1", "username": "mayank"}
+    mock_mm.find_channel_id.return_value = "ch_1"
+    mock_mm.has_bot_replied_for_url.return_value = False
+
+    from app.mattermost import MattermostClient
+    mock_mm.build_mention_regex.side_effect = MattermostClient.build_mention_regex
+
+    mock_mm.get_posts_since.return_value = [
+        {"id": "p_merged", "user_id": "u2", "message": "@mayank merged: https://gitlab.com/acme/backend/-/merge_requests/100", "delete_at": 0},
+        {"id": "p_closed", "user_id": "u2", "message": "@mayank closed: https://gitlab.com/acme/backend/-/merge_requests/200", "delete_at": 0},
+        {"id": "p_approved", "user_id": "u2", "message": "@mayank approved: https://gitlab.com/acme/backend/-/merge_requests/300", "delete_at": 0},
+    ]
+
+    mock_resolver = MagicMock()
+    mock_resolver.extract_pr_urls.side_effect = lambda msg: [u for u in [
+        "https://gitlab.com/acme/backend/-/merge_requests/100",
+        "https://gitlab.com/acme/backend/-/merge_requests/200",
+        "https://gitlab.com/acme/backend/-/merge_requests/300",
+    ] if u in msg]
+
+    def mock_get_details(url):
+        if "100" in url:
+            return PullRequestDetails(
+                provider="gitlab", url=url, id="100", title="MR merged", description="",
+                author="dev", source_branch="b", target_branch="pre-main", state="merged"
+            )
+        elif "200" in url:
+            return PullRequestDetails(
+                provider="gitlab", url=url, id="200", title="MR closed", description="",
+                author="dev", source_branch="b", target_branch="pre-main", state="closed"
+            )
+        else:
+            return PullRequestDetails(
+                provider="gitlab", url=url, id="300", title="MR approved", description="",
+                author="dev", source_branch="b", target_branch="pre-main", state="opened", is_approved=True
+            )
+
+    mock_resolver.get_details.side_effect = mock_get_details
+
+    state_file = tmp_path / "state_skip.json"
+    state_manager = StateManager(state_file=state_file)
+    bot = PRReviewBot(
+        mm_client=mock_mm,
+        state_manager=state_manager,
+        git_resolver=mock_resolver,
+        reviewer=MagicMock(),
+        dry_run=False,
+        target_username="mayank"
+    )
+
+    bot.run_once()
+
+    # None of the 3 MRs should be reviewed or receive a reply!
+    assert mock_mm.reply_in_thread.call_count == 0
+
+    # All 3 should be recorded in state to avoid redundant re-checks
+    state = state_manager.load()
+    assert "https://gitlab.com/acme/backend/-/merge_requests/100" in state["reviewed_urls"]
+    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/100"]["status"] == "skipped_merged"
+    assert "https://gitlab.com/acme/backend/-/merge_requests/200" in state["reviewed_urls"]
+    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/200"]["status"] == "skipped_closed"
+    assert "https://gitlab.com/acme/backend/-/merge_requests/300" in state["reviewed_urls"]
+    assert state["reviewed_urls"]["https://gitlab.com/acme/backend/-/merge_requests/300"]["status"] == "skipped_approved"
+
+
+def test_skips_when_thread_already_replied(tmp_path):
+    mock_mm = MagicMock()
+    mock_mm.base_url = "https://mattermost.test"
+    mock_mm.token = "mock-pat"
+    mock_mm.get_me.return_value = {"id": "uid_1", "username": "mayank"}
+    mock_mm.find_channel_id.return_value = "ch_1"
+    # Thread ALREADY has a reply
+    mock_mm.has_bot_replied_for_url.return_value = True
+
+    from app.mattermost import MattermostClient
+    mock_mm.build_mention_regex.side_effect = MattermostClient.build_mention_regex
+
+    mock_mm.get_posts_since.return_value = [
+        {"id": "p_exist", "user_id": "u2", "message": "@mayank please check: https://gitlab.com/acme/backend/-/merge_requests/400", "delete_at": 0},
+    ]
+
+    mock_resolver = MagicMock()
+    mock_resolver.extract_pr_urls.return_value = ["https://gitlab.com/acme/backend/-/merge_requests/400"]
+
+    state_file = tmp_path / "state_thread.json"
+    state_manager = StateManager(state_file=state_file)
+    bot = PRReviewBot(
+        mm_client=mock_mm,
+        state_manager=state_manager,
+        git_resolver=mock_resolver,
+        reviewer=MagicMock(),
+        dry_run=False,
+        target_username="mayank"
+    )
+
+    bot.run_once()
+
+    # Should not call git resolver or reply in thread
+    assert mock_resolver.get_details.call_count == 0
     assert mock_mm.reply_in_thread.call_count == 0
