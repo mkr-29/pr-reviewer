@@ -16,6 +16,12 @@ def test_mention_regex_exact_match():
     assert regex.search("Email is mayank@example.com") is None
     assert regex.search("Hey @notmayank please review") is None
 
+    # Comma-separated multi-username support
+    multi_regex = MattermostClient.build_mention_regex("mayank.kumar, mayank.kumar1")
+    assert multi_regex.search("Hey @mayank.kumar, please check") is not None
+    assert multi_regex.search("Hey @mayank.kumar1 please review") is not None
+    assert multi_regex.search("Hey @mayank.kumar2 please review") is None
+
 
 def test_git_url_extraction():
     resolver = GitResolver()

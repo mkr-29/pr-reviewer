@@ -74,5 +74,12 @@ class MattermostClient:
 
     @staticmethod
     def build_mention_regex(username: str) -> re.Pattern:
-        """Constructs an exact-word mention regex for @username."""
-        return re.compile(rf"(?<![\w.\-])@{re.escape(username)}(?![\w\-]|\.\w)", re.IGNORECASE)
+        """Constructs an exact-word mention regex for @username or multiple comma-separated usernames."""
+        parts = [re.escape(u.strip().lstrip("@")) for u in username.split(",") if u.strip()]
+        if not parts:
+            pattern = re.escape(username.lstrip("@"))
+        elif len(parts) == 1:
+            pattern = parts[0]
+        else:
+            pattern = f"(?:{'|'.join(parts)})"
+        return re.compile(rf"(?<![\w.\-])@{pattern}(?![\w\-]|\.\w)", re.IGNORECASE)

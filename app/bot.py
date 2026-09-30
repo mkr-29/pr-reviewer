@@ -62,10 +62,16 @@ class PRReviewBot:
         processed_count = 0
 
         for post in posts:
-            if post.get("delete_at", 0) > 0 or post.get("user_id") == my_id:
-                continue  # Skip deleted posts and bot's own replies
+            if post.get("delete_at", 0) > 0:
+                continue
 
             msg = post.get("message", "")
+            # Avoid feedback loops: skip automated replies posted by the bot itself
+            if post.get("user_id") == my_id and (
+                msg.startswith(":warning:") or msg.startswith("**Automated review for**")
+            ):
+                continue
+
             if not mention_re.search(msg):
                 continue  # Post does not tag the user
 

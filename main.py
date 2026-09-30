@@ -70,7 +70,7 @@ def main():
     signal.signal(signal.SIGTERM, handle_exit)
 
     # To ensure accurate timezone scheduling regardless of host machine system clock timezone:
-    schedule.every().day.at(target_time).do(run_job, dry_run=args.dry_run)
+    schedule.every().day.at(target_time, tz_name).do(run_job, dry_run=args.dry_run)
 
     while True:
         # Check current time in target timezone
